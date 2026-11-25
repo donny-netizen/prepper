@@ -34,6 +34,11 @@ MIN_POINTS = 12
 LONG_MOVE = 0.08
 SHARP_JUMP = 0.15
 
+AEWS_PAGE = "https://ews.kylemcdonald.net/"
+AEWS_ALERT_ABOVE = 2
+AEWS_POLL_SECONDS = 15 * 60
+AEWS_REMIND_SECONDS = 5 * 60
+
 
 class JudgementError(ValueError):
     """The day's inputs do not match the decision contract."""
@@ -125,6 +130,89 @@ def read_ammo(series: dict) -> dict:
         "series": labels,
         "label": _ammo_card_label(labels),
     }
+
+
+def aews_level(value) -> int:
+    """The panel's emergency level is an integer from 1 through 5."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or isinstance(value, float) and value != int(value):
+        raise JudgementError("AEWS level must be an integer from 1 to 5")
+    level = int(value)
+    if level < 1 or level > 5:
+        raise JudgementError("AEWS level must be an integer from 1 to 5")
+    return level
+
+
+def aews_reading(payload) -> dict:
+    """Keep the current panel reading and drop the history."""
+    if not isinstance(payload, dict):
+        raise JudgementError("AEWS dashboard must be an object")
+    current = payload.get("current")
+    if not isinstance(current, dict):
+        raise JudgementError("AEWS dashboard has no current reading")
+    as_of = current.get("asOf")
+    alert_level = current.get("alertLevel")
+    return {
+        "level": aews_level(current.get("emergencyLevel")),
+        "as_of": as_of if isinstance(as_of, str) else None,
+        "alert_level": alert_level if isinstance(alert_level, str) else None,
+        "page": AEWS_PAGE,
+    }
+
+
+def aews_message(level) -> str:
+    """One Slack line plus the site. No webhook and no token."""
+    return f"AEWS Alert level: {aews_level(level)}\n{AEWS_PAGE}"
+
+
+def aews_public(state) -> dict | None:
+    """The headline fields. The ack clock stays on Railway."""
+    if not isinstance(state, dict) or "level" not in state:
+        return None
+    return {
+        "level": aews_level(state.get("level")),
+        "as_of": state.get("as_of"),
+        "alert_level": state.get("alert_level"),
+        "page": AEWS_PAGE,
+    }
+
+
+def aews_step(state, reading, now, replied=False) -> dict:
+    """Advance one AEWS episode.
+
+    A level of 1 or 2 never alerts. Above 2, the first message is due
+    immediately and another is due every five minutes until a reply acks
+    that episode. Falling back to 2 or below ends it. A later rise starts
+    a new episode. A reply during a quiet level does not carry forward.
+    """
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise JudgementError("now must be timezone-aware")
+    if not isinstance(reading, dict):
+        raise JudgementError("AEWS reading must be an object")
+    level = aews_level(reading.get("level"))
+    previous = state if isinstance(state, dict) else {}
+    episode = previous.get("episode") if isinstance(previous.get("episode"), dict) else None
+    if level <= AEWS_ALERT_ABOVE:
+        episode = None
+        send = False
+    else:
+        if episode is None:
+            episode = {"acked": False, "last_sent_at": None, "slack_ts": None}
+        if replied:
+            episode = {**episode, "acked": True}
+        send = False
+        if not episode.get("acked"):
+            last = _parse_optional_time(episode.get("last_sent_at"))
+            if last is None or (now - last).total_seconds() >= AEWS_REMIND_SECONDS:
+                send = True
+                episode = {**episode, "last_sent_at": now.astimezone(timezone.utc).isoformat()}
+    saved = {
+        "level": level,
+        "as_of": reading.get("as_of") if isinstance(reading.get("as_of"), str) else previous.get("as_of"),
+        "alert_level": reading.get("alert_level") if isinstance(reading.get("alert_level"), str) else previous.get("alert_level"),
+        "page": AEWS_PAGE,
+        "episode": episode,
+    }
+    return {"state": saved, "send": send, "slack": aews_message(level) if send else None}
 
 
 def slack_text(previous: dict | None, cards: dict, ammo_label: str, chrome_waiting) -> str | None:
@@ -234,6 +322,12 @@ def _parse_time(value) -> datetime:
     return parsed
 
 
+def _parse_optional_time(value) -> datetime | None:
+    if value in (None, ""):
+        return None
+    return _parse_time(value)
+
+
 def _parse_date(value) -> date | None:
     if value in (None, ""):
         return None
@@ -321,6 +415,32 @@ def _self_check() -> None:
     assert quiet["skipped"] is False and quiet["notify"] is False and quiet["slack"] is None
     early = judge({"now": "2026-11-25T14:00:00Z", "last_run_on": None})
     assert early["skipped"] is True and early["slack"] is None
+
+    panel = aews_reading({"current": {"emergencyLevel": 1, "asOf": "2026-11-25T16:29:30+00:00", "alertLevel": "normal"}, "trends": [1, 2, 3]})
+    assert panel == {"level": 1, "as_of": "2026-11-25T16:29:30+00:00", "alert_level": "normal", "page": AEWS_PAGE}
+    try:
+        aews_level(6)
+    except JudgementError:
+        pass
+    else:
+        raise AssertionError("AEWS level stays inside 1 through 5")
+    quiet_level = aews_step(None, {"level": 2}, datetime(2026, 11, 25, 16, 0, tzinfo=timezone.utc))
+    assert quiet_level["send"] is False and quiet_level["state"]["episode"] is None
+    started = aews_step(None, {"level": 3, "as_of": "t", "alert_level": "elevated"}, datetime(2026, 11, 25, 16, 0, tzinfo=timezone.utc))
+    assert started["send"] is True and started["slack"].startswith("AEWS Alert level: 3")
+    assert AEWS_PAGE in started["slack"]
+    held = aews_step(started["state"], {"level": 3}, datetime(2026, 11, 25, 16, 4, tzinfo=timezone.utc))
+    assert held["send"] is False
+    reminded = aews_step(started["state"], {"level": 4}, datetime(2026, 11, 25, 16, 5, tzinfo=timezone.utc))
+    assert reminded["send"] is True and "level: 4" in reminded["slack"]
+    acked = aews_step(reminded["state"], {"level": 5}, datetime(2026, 11, 25, 16, 20, tzinfo=timezone.utc), replied=True)
+    assert acked["send"] is False and acked["state"]["episode"]["acked"] is True
+    still = aews_step(acked["state"], {"level": 5}, datetime(2026, 11, 25, 17, 0, tzinfo=timezone.utc))
+    assert still["send"] is False
+    ended = aews_step(still["state"], {"level": 2}, datetime(2026, 11, 25, 18, 0, tzinfo=timezone.utc))
+    assert ended["state"]["episode"] is None
+    again = aews_step(ended["state"], {"level": 3}, datetime(2026, 11, 25, 19, 0, tzinfo=timezone.utc))
+    assert again["send"] is True and again["state"]["episode"]["acked"] is False
 
 
 def main(argv: list[str]) -> int:
