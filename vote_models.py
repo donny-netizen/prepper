@@ -69,8 +69,8 @@ def vote_gemini(day: dict) -> dict:
         "generationConfig": {"temperature": 0},
     }
     result = _http(
-        # gemini-2.0-flash was retired; Flash remains the free daily vote model.
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + key,
+        # Google now routes new free keys to gemini-3.8-flash.
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=" + key,
         headers={"Content-Type": "application/json"},
         body=payload,
     )
