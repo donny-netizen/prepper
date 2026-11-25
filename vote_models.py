@@ -43,7 +43,8 @@ def _parse_votes(text: str) -> dict:
 def vote_groq(day: dict) -> dict:
     key = os.environ["GROQ_API_KEY"]
     payload = {
-        "model": "llama-3.1-8b-instant",
+        # Groq free tier retired llama-3.1-8b-instant; gpt-oss-20b is the free replacement.
+        "model": "openai/gpt-oss-20b",
         "temperature": 0,
         "messages": [{"role": "user", "content": PROMPT + json.dumps(day, separators=(",", ":"))}],
     }

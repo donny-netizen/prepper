@@ -13,7 +13,7 @@ Workflow: `.github/workflows/daily-judge.yml`
 - Cron: `30 14 * * *` (after Railway collector `0 14 * * *`)
 - Script: `vote_models.py`
 - Models (free):
-  - Groq `llama-3.1-8b-instant`
+  - Groq `openai/gpt-oss-20b` (free-tier replacement after Llama was retired)
   - Google Gemini `gemini-2.0-flash`
   - OpenRouter `meta-llama/llama-3.1-8b-instruct:free`
 - Tie-break: Food→Groq, Water storage→Gemini, Power→OpenRouter
@@ -27,6 +27,14 @@ Workflow: `.github/workflows/daily-judge.yml`
 | `GROQ_API_KEY` | Groq chat completions |
 | `GEMINI_API_KEY` | Google AI Studio key for Flash |
 | `OPENROUTER_API_KEY` | OpenRouter free-model slot |
+
+### How to create the three free API keys
+
+Paste each secret into GitHub → `donny-netizen/prepper` → Settings → Secrets and variables → Actions. Do not commit keys.
+
+1. **GROQ_API_KEY** — [console.groq.com/keys](https://console.groq.com/keys) → sign in → Create API Key → copy once (`gsk_…`).
+2. **GEMINI_API_KEY** — [aistudio.google.com/apikey](https://aistudio.google.com/apikey) → Google account → Create API key → copy (`AIza…`). Free tier; no billing required for light daily use.
+3. **OPENROUTER_API_KEY** — [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) → Create → copy (`sk-or-v1-…`). Free `:free` models allow a small daily quota without buying credits.
 
 Slack for supply text is posted by Railway from `PREPPING_SLACK_*` when the judgement result has `notify` and `slack`. Do not put Slack tokens in this public repo.
 
