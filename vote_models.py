@@ -23,9 +23,15 @@ PROMPT = (
 
 def _http(url, headers=None, body=None, timeout=45):
     data = None if body is None else json.dumps(body).encode()
-    request = urllib.request.Request(url, data=data, headers=headers or {}, method="POST" if data else "GET")
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode())
+    hdrs = {"User-Agent": "PreppingJudge/1.0 (+https://github.com/donny-netizen/prepper)", "Accept": "application/json"}
+    hdrs.update(headers or {})
+    request = urllib.request.Request(url, data=data, headers=hdrs, method="POST" if data else "GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode())
+    except urllib.error.HTTPError as err:
+        detail = err.read().decode("utf-8", "replace")[:300]
+        raise RuntimeError("HTTP %s for %s: %s" % (err.code, url.split("?")[0], detail)) from None
 
 
 def _parse_votes(text: str) -> dict:
@@ -104,32 +110,30 @@ def collect_votes(day: dict) -> dict:
 
 def hub_get(path: str):
     base = os.environ["PREPPING_HUB_URL"].rstrip("/")
-    token = os.environ["PREPPING_HUB_TOKEN"]
-    request = urllib.request.Request(
+    token = os.environ["PREPPING_HUB_TOKEN"].strip()
+    if not base or not token:
+        raise RuntimeError("PREPPING_HUB_URL and PREPPING_HUB_TOKEN are required")
+    return _http(
         base + path,
-        headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+        headers={"Authorization": "Bearer " + token},
+        timeout=60,
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return json.loads(response.read().decode())
 
 
 def hub_post(path: str, body: dict):
     base = os.environ["PREPPING_HUB_URL"].rstrip("/")
-    token = os.environ["PREPPING_HUB_TOKEN"]
-    data = json.dumps(body).encode()
-    request = urllib.request.Request(
+    token = os.environ["PREPPING_HUB_TOKEN"].strip()
+    if not base or not token:
+        raise RuntimeError("PREPPING_HUB_URL and PREPPING_HUB_TOKEN are required")
+    return _http(
         base + path,
-        data=data,
         headers={
             "Authorization": "Bearer " + token,
             "Content-Type": "application/json",
-            "Accept": "application/json",
         },
-        method="POST",
+        body=body,
+        timeout=60,
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return json.loads(response.read().decode())
-
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
