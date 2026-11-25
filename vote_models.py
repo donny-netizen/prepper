@@ -73,17 +73,23 @@ def vote_gemini(day: dict) -> dict:
     key = os.environ["GEMINI_API_KEY"]
     payload = {
         "contents": [{"parts": [{"text": PROMPT + json.dumps(day, separators=(",", ":"))}]}],
-        "generationConfig": {"temperature": 0},
+        # 3.8 Flash thinks at medium by default; low keeps the three-word vote under Actions timeouts.
+        "generationConfig": {
+            "temperature": 0,
+            "maxOutputTokens": 64,
+            "thinkingConfig": {"thinkingLevel": "low"},
+        },
     }
     result = _http(
         # Google now routes new free keys to gemini-3.8-flash.
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=" + key,
         headers={"Content-Type": "application/json"},
         body=payload,
-        timeout=120,
+        timeout=90,
         retries=1,
     )
-    text = result["candidates"][0]["content"]["parts"][0]["text"]
+    parts = result["candidates"][0]["content"]["parts"]
+    text = "".join(part.get("text", "") for part in parts if not part.get("thought"))
     return _parse_votes(text)
 
 
