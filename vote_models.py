@@ -21,17 +21,24 @@ PROMPT = (
 )
 
 
-def _http(url, headers=None, body=None, timeout=45):
+def _http(url, headers=None, body=None, timeout=90, retries=1):
     data = None if body is None else json.dumps(body).encode()
     hdrs = {"User-Agent": "PreppingJudge/1.0 (+https://github.com/donny-netizen/prepper)", "Accept": "application/json"}
     hdrs.update(headers or {})
-    request = urllib.request.Request(url, data=data, headers=hdrs, method="POST" if data else "GET")
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read().decode())
-    except urllib.error.HTTPError as err:
-        detail = err.read().decode("utf-8", "replace")[:300]
-        raise RuntimeError("HTTP %s for %s: %s" % (err.code, url.split("?")[0], detail)) from None
+    last = None
+    for attempt in range(retries + 1):
+        request = urllib.request.Request(url, data=data, headers=hdrs, method="POST" if data else "GET")
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return json.loads(response.read().decode())
+        except urllib.error.HTTPError as err:
+            detail = err.read().decode("utf-8", "replace")[:300]
+            raise RuntimeError("HTTP %s for %s: %s" % (err.code, url.split("?")[0], detail)) from None
+        except (TimeoutError, urllib.error.URLError) as err:
+            last = err
+            if attempt >= retries:
+                break
+    raise RuntimeError("Timed out calling %s: %s" % (url.split("?")[0], last)) from None
 
 
 def _parse_votes(text: str) -> dict:
@@ -73,6 +80,8 @@ def vote_gemini(day: dict) -> dict:
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=" + key,
         headers={"Content-Type": "application/json"},
         body=payload,
+        timeout=120,
+        retries=1,
     )
     text = result["candidates"][0]["content"]["parts"][0]["text"]
     return _parse_votes(text)
