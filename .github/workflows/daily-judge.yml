@@ -1,0 +1,34 @@
+name: Daily supply vote
+
+on:
+  schedule:
+    # After the Railway collector at 14:00 UTC.
+    - cron: "30 14 * * *"
+  workflow_dispatch:
+
+jobs:
+  judge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch day, vote, judge, post
+        env:
+          PREPPING_HUB_URL: ${{ secrets.PREPPING_HUB_URL }}
+          PREPPING_HUB_TOKEN: ${{ secrets.PREPPING_HUB_TOKEN }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: python3 vote_models.py
+      - name: Upload day artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-judge
+          path: |
+            day.json
+            judgement-result.json
+          if-no-files-found: ignore
