@@ -15,8 +15,8 @@ import judgement
 
 CARDS = judgement.SUPPLY_CARDS
 MODELS = ("groq", "gemini", "openrouter")
-# 3.8 is the free-key default; Flash-Lite is the overflow path when 3.8 is 503'd.
-GEMINI_MODELS = ("gemini-3.8-flash", "gemini-3.5-flash-lite")
+# Flash-Lite first (minimal thinking, less 503); 3.8 is the overflow path.
+GEMINI_MODELS = ("gemini-3.5-flash-lite", "gemini-3.8-flash")
 PROMPT = (
     "You judge emergency-supply readiness cards. Reply with exactly three lines, "
     "one per card in this order: Food, Water storage, Power. Each line must be "
@@ -77,19 +77,35 @@ def vote_groq(day: dict) -> dict:
     return _parse_votes(result["choices"][0]["message"]["content"])
 
 
+def _gemini_text(result: dict) -> str:
+    candidates = result.get("candidates") or []
+    if not candidates:
+        raise RuntimeError("gemini returned no candidates: %s" % (json.dumps(result)[:300],))
+    content = candidates[0].get("content") or {}
+    parts = content.get("parts") or []
+    text = "".join(part.get("text", "") for part in parts if isinstance(part, dict) and not part.get("thought"))
+    if not text.strip():
+        raise RuntimeError(
+            "gemini returned empty text (finish=%s): %s"
+            % (candidates[0].get("finishReason"), json.dumps(result)[:300])
+        )
+    return text
+
+
 def vote_gemini(day: dict) -> dict:
     key = os.environ["GEMINI_API_KEY"]
-    payload = {
-        "contents": [{"parts": [{"text": PROMPT + json.dumps(day, separators=(",", ":"))}]}],
-        # 3.8 Flash thinks at medium by default; low keeps the three-word vote under Actions timeouts.
-        "generationConfig": {
-            "temperature": 0,
-            "maxOutputTokens": 64,
-            "thinkingConfig": {"thinkingLevel": "low"},
-        },
-    }
     last = None
     for model in GEMINI_MODELS:
+        # maxOutputTokens covers thinking + answer; 64 was too small and dropped `parts`.
+        thinking = "minimal" if "flash-lite" in model else "low"
+        payload = {
+            "contents": [{"parts": [{"text": PROMPT + json.dumps(day, separators=(",", ":"))}]}],
+            "generationConfig": {
+                "temperature": 0,
+                "maxOutputTokens": 1024,
+                "thinkingConfig": {"thinkingLevel": thinking},
+            },
+        }
         try:
             result = _http(
                 "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s" % (model, key),
@@ -98,9 +114,7 @@ def vote_gemini(day: dict) -> dict:
                 timeout=90,
                 retries=3,
             )
-            parts = result["candidates"][0]["content"]["parts"]
-            text = "".join(part.get("text", "") for part in parts if not part.get("thought"))
-            return _parse_votes(text)
+            return _parse_votes(_gemini_text(result))
         except RuntimeError as err:
             last = err
             if "HTTP 503" not in str(err) and "HTTP 429" not in str(err):
