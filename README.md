@@ -15,7 +15,7 @@ Workflow: `.github/workflows/daily-judge.yml`
 - Models (free):
   - Groq `openai/gpt-oss-20b` (free-tier replacement after Llama was retired)
   - Google Gemini `gemini-3.5-flash-lite` (thinking `minimal`; falls back to `gemini-3.8-flash` on 503)
-  - OpenRouter `meta-llama/llama-3.1-8b-instruct:free`
+  - OpenRouter `openrouter/free` (falls back to Gemma 4 / LFM `:free` if needed)
 - Tie-break: Food→Groq, Water storage→Gemini, Power→OpenRouter
 
 ### Required GitHub secrets

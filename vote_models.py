@@ -124,22 +124,35 @@ def vote_gemini(day: dict) -> dict:
 
 def vote_openrouter(day: dict) -> dict:
     key = os.environ["OPENROUTER_API_KEY"]
-    payload = {
-        "model": "meta-llama/llama-3.1-8b-instruct:free",
-        "temperature": 0,
-        "messages": [{"role": "user", "content": PROMPT + json.dumps(day, separators=(",", ":"))}],
-    }
-    result = _http(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers={
-            "Authorization": "Bearer " + key,
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/donny-netizen/prepper",
-            "X-Title": "prepper daily judge",
-        },
-        body=payload,
-    )
-    return _parse_votes(result["choices"][0]["message"]["content"])
+    # Specific :free Llama IDs keep retiring; openrouter/free routes to a live free model.
+    # Fixed fallbacks stay $0 if the router is briefly empty.
+    models = ("openrouter/free", "google/gemma-4-26b-a4b-it:free", "liquid/lfm-3-1.7b:free")
+    last = None
+    for model in models:
+        payload = {
+            "model": model,
+            "temperature": 0,
+            "messages": [{"role": "user", "content": PROMPT + json.dumps(day, separators=(",", ":"))}],
+        }
+        try:
+            result = _http(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": "Bearer " + key,
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://github.com/donny-netizen/prepper",
+                    "X-Title": "prepper daily judge",
+                },
+                body=payload,
+                timeout=90,
+                retries=2,
+            )
+            return _parse_votes(result["choices"][0]["message"]["content"])
+        except RuntimeError as err:
+            last = err
+            if "HTTP 404" not in str(err) and "HTTP 429" not in str(err) and "HTTP 503" not in str(err):
+                raise
+    raise last
 
 
 def collect_votes(day: dict) -> dict:
