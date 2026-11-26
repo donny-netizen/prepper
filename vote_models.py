@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -14,6 +15,8 @@ import judgement
 
 CARDS = judgement.SUPPLY_CARDS
 MODELS = ("groq", "gemini", "openrouter")
+# 3.8 is the free-key default; Flash-Lite is the overflow path when 3.8 is 503'd.
+GEMINI_MODELS = ("gemini-3.8-flash", "gemini-3.5-flash-lite")
 PROMPT = (
     "You judge emergency-supply readiness cards. Reply with exactly three lines, "
     "one per card in this order: Food, Water storage, Power. Each line must be "
@@ -33,11 +36,16 @@ def _http(url, headers=None, body=None, timeout=90, retries=1):
                 return json.loads(response.read().decode())
         except urllib.error.HTTPError as err:
             detail = err.read().decode("utf-8", "replace")[:300]
-            raise RuntimeError("HTTP %s for %s: %s" % (err.code, url.split("?")[0], detail)) from None
+            last = RuntimeError("HTTP %s for %s: %s" % (err.code, url.split("?")[0], detail))
+            if err.code in (429, 503) and attempt < retries:
+                time.sleep(2 ** attempt)
+                continue
+            raise last from None
         except (TimeoutError, urllib.error.URLError) as err:
             last = err
             if attempt >= retries:
                 break
+            time.sleep(2 ** attempt)
     raise RuntimeError("Timed out calling %s: %s" % (url.split("?")[0], last)) from None
 
 
@@ -80,17 +88,24 @@ def vote_gemini(day: dict) -> dict:
             "thinkingConfig": {"thinkingLevel": "low"},
         },
     }
-    result = _http(
-        # Google now routes new free keys to gemini-3.8-flash.
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=" + key,
-        headers={"Content-Type": "application/json"},
-        body=payload,
-        timeout=90,
-        retries=1,
-    )
-    parts = result["candidates"][0]["content"]["parts"]
-    text = "".join(part.get("text", "") for part in parts if not part.get("thought"))
-    return _parse_votes(text)
+    last = None
+    for model in GEMINI_MODELS:
+        try:
+            result = _http(
+                "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s" % (model, key),
+                headers={"Content-Type": "application/json"},
+                body=payload,
+                timeout=90,
+                retries=3,
+            )
+            parts = result["candidates"][0]["content"]["parts"]
+            text = "".join(part.get("text", "") for part in parts if not part.get("thought"))
+            return _parse_votes(text)
+        except RuntimeError as err:
+            last = err
+            if "HTTP 503" not in str(err) and "HTTP 429" not in str(err):
+                raise
+    raise last
 
 
 def vote_openrouter(day: dict) -> dict:
